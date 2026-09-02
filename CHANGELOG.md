@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file. Take a look
 
 ## [Unreleased]
 
+### Added
+
+#### Navigator
+
+* `AudioNavigator.Configuration` now supports a configurable `bufferingStrategy`, allowing apps to favor immediate playback or let the system wait and buffer ahead to minimize stalls on slow connections.
+
 ### Changed
 
 #### Shared

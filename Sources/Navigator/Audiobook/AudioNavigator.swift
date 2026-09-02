@@ -50,6 +50,38 @@ public struct MediaPlaybackInfo: Sendable {
     }
 }
 
+/// Controls how `AudioNavigator` balances startup latency against playback
+/// stalls when streaming media.
+public enum AudioBufferingStrategy: Sendable, Equatable {
+    /// Starts as soon as media data is available, minimizing startup latency
+    /// at the cost of a higher risk of stalling on slow connections.
+    case immediate
+
+    /// Lets the system wait until playback is likely to keep up.
+    ///
+    /// `preferredForwardBufferDuration` is the desired duration of media to
+    /// buffer ahead of the playhead. A value of `0` lets the system choose.
+    case minimizeStalls(preferredForwardBufferDuration: TimeInterval = 0)
+
+    var automaticallyWaitsToMinimizeStalling: Bool {
+        switch self {
+        case .immediate:
+            false
+        case .minimizeStalls:
+            true
+        }
+    }
+
+    var preferredForwardBufferDuration: TimeInterval {
+        switch self {
+        case .immediate:
+            0
+        case let .minimizeStalls(duration):
+            max(0, duration)
+        }
+    }
+}
+
 @MainActor public protocol AudioNavigatorDelegate: NavigatorDelegate {
     /// Called when the playback updates.
     func navigator(_ navigator: AudioNavigator, playbackDidChange info: MediaPlaybackInfo)
@@ -91,6 +123,9 @@ public final class AudioNavigator: Navigator, Configurable, AudioSessionUser, Lo
         /// Interval between two updates of the playback state.
         public var playbackRefreshInterval: TimeInterval
 
+        /// Strategy used to balance startup latency against playback stalls.
+        public var bufferingStrategy: AudioBufferingStrategy
+
         /// Custom configuration for the audio session.
         public var audioSession: AudioSession.Configuration
 
@@ -98,6 +133,7 @@ public final class AudioNavigator: Navigator, Configurable, AudioSessionUser, Lo
             preferences: AudioPreferences = AudioPreferences(),
             defaults: AudioDefaults = AudioDefaults(),
             playbackRefreshInterval: TimeInterval = 0.5,
+            bufferingStrategy: AudioBufferingStrategy = .immediate,
             audioSession: AudioSession.Configuration = .init(
                 category: .playback,
                 mode: .spokenAudio,
@@ -107,6 +143,7 @@ public final class AudioNavigator: Navigator, Configurable, AudioSessionUser, Lo
             self.preferences = preferences
             self.defaults = defaults
             self.playbackRefreshInterval = playbackRefreshInterval
+            self.bufferingStrategy = bufferingStrategy
             self.audioSession = audioSession
         }
     }
@@ -222,7 +259,12 @@ public final class AudioNavigator: Navigator, Configurable, AudioSessionUser, Lo
                     await go(to: link)
                 }
             }
-            player.playImmediately(atRate: Float(settings.speed))
+            switch config.bufferingStrategy {
+            case .immediate:
+                player.playImmediately(atRate: Float(settings.speed))
+            case .minimizeStalls:
+                player.rate = Float(settings.speed)
+            }
         }
     }
 
@@ -271,7 +313,7 @@ public final class AudioNavigator: Navigator, Configurable, AudioSessionUser, Lo
     private func makePlayer() -> AVPlayer {
         let player = AVPlayer()
         player.allowsExternalPlayback = false
-        player.automaticallyWaitsToMinimizeStalling = false
+        player.automaticallyWaitsToMinimizeStalling = config.bufferingStrategy.automaticallyWaitsToMinimizeStalling
         player.volume = Float(settings.volume)
 
         let periodicObserver = player.addPeriodicTimeObserver(
@@ -473,7 +515,9 @@ public final class AudioNavigator: Navigator, Configurable, AudioSessionUser, Lo
             if player.currentItem == nil || resourceIndex != newResourceIndex {
                 log(.info, "Starts playing \(link.href)")
                 let asset = try mediaLoader.makeAsset(for: link)
-                player.replaceCurrentItem(with: AVPlayerItem(asset: asset))
+                let item = AVPlayerItem(asset: asset)
+                item.preferredForwardBufferDuration = config.bufferingStrategy.preferredForwardBufferDuration
+                player.replaceCurrentItem(with: item)
                 resourceIndex = newResourceIndex
                 loadAssetDuration()
                 loadedTimeRangesTimer.fire()

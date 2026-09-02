@@ -83,6 +83,24 @@ let navigator = AudioNavigator(
 navigator.play()
 ```
 
+For remote audiobooks on slow or unstable connections, you can trade a longer
+startup delay for fewer interruptions by enabling automatic stall avoidance:
+
+```swift
+let navigator = AudioNavigator(
+    publication: publication,
+    config: .init(
+        bufferingStrategy: .minimizeStalls(
+            preferredForwardBufferDuration: 30
+        )
+    )
+)
+```
+
+The forward buffer duration is a preference rather than a guaranteed minimum.
+Pass `0` to let the system choose an appropriate buffer. The default
+`.immediate` strategy preserves the shortest startup time.
+
 ## Navigating the contents of the publication
 
 The `Navigator` interface offers various `go` APIs for navigating the publication. For instance:
